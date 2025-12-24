@@ -1,0 +1,63 @@
+name: Windows RDP with Serveo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp-server:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Enable Remote Desktop
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
+          Write-Host "✓ RDP Enabled"
+
+      - name: Create RDP User
+        run: |
+          $Password = "Secure@" + (Get-Random -Minimum 10000 -Maximum 99999)
+          $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          
+          New-LocalUser -Name "rdpuser" -Password $SecurePassword -PasswordNeverExpires -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "rdpuser" -ErrorAction SilentlyContinue
+          
+          echo "RDP_PASSWORD=$Password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "✓ User created: rdpuser / $Password"
+
+      - name: Setup SSH Tunnel via Serveo
+        run: |
+          # Generate SSH key
+          ssh-keygen -t rsa -f rdp_key -N '""' -q
+          
+          Write-Host "Starting Serveo tunnel..."
+          Start-Process ssh -ArgumentList "-o", "StrictHostKeyChecking=no", "-R", "0:localhost:3389", "serveo.net" -WindowStyle Normal
+          
+          Start-Sleep -Seconds 10
+          Write-Host "✓ Tunnel established"
+
+      - name: Display Info
+        run: |
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "   SERVEO RDP CONNECTION"
+          Write-Host "=========================================="
+          Write-Host "Username: rdpuser"
+          Write-Host "Password: $env:RDP_PASSWORD"
+          Write-Host ""
+          Write-Host "Cek output SSH di atas untuk mendapatkan:"
+          Write-Host "Format: Forwarding TCP connections from serveo.net:XXXXX"
+          Write-Host ""
+          Write-Host "Koneksi RDP ke: serveo.net:XXXXX"
+          Write-Host "=========================================="
+
+      - name: Keep Server Alive
+        run: |
+          Write-Host "RDP Server Active - Press Cancel to stop"
+          for ($i = 0; $i -lt 72; $i++) {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Running... ($i/72)"
+            Start-Sleep -Seconds 300
+          }
