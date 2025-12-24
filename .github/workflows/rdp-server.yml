@@ -46,35 +46,60 @@ jobs:
       - name: Start ngrok Tunnel
         run: |
           Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
           
-          $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-          $publicUrl = $response.tunnels[0].public_url
+          Write-Host "Menunggu ngrok siap..."
+          $maxRetries = 20
+          $retryCount = 0
+          $tunnelReady = $false
           
-          Write-Host "======================================"
-          Write-Host "Ngrok Tunnel: $publicUrl"
-          Write-Host "======================================"
+          while (-not $tunnelReady -and $retryCount -lt $maxRetries) {
+            Start-Sleep -Seconds 3
+            try {
+              $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+              if ($response.tunnels.Count -gt 0) {
+                $publicUrl = $response.tunnels[0].public_url
+                Write-Host "======================================"
+                Write-Host "Ngrok Tunnel: $publicUrl"
+                Write-Host "======================================"
+                echo "NGROK_URL=$publicUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+                $tunnelReady = $true
+              }
+            } catch {
+              $retryCount++
+              Write-Host "Retry $retryCount/$maxRetries..."
+            }
+          }
+          
+          if (-not $tunnelReady) {
+            throw "Gagal membuat ngrok tunnel setelah $maxRetries percobaan"
+          }
 
       - name: Display Connection Info
         run: |
           Start-Sleep -Seconds 2
-          $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-          $rdpUrl = $tunnels.tunnels[0].public_url
           
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "    INFORMASI KONEKSI RDP"
-          Write-Host "=========================================="
-          Write-Host "URL Lengkap: $rdpUrl"
-          Write-Host "Username: rdpuser"
-          Write-Host "Password: $env:RDP_PASSWORD"
-          Write-Host "=========================================="
-          Write-Host ""
-          Write-Host "Cara Koneksi:"
-          Write-Host "1. Buka Remote Desktop Connection"
-          Write-Host "2. Masukkan: $($rdpUrl -replace 'tcp://', '')"
-          Write-Host "3. Login dengan username dan password di atas"
-          Write-Host ""
+          try {
+            $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+            $rdpUrl = $tunnels.tunnels[0].public_url
+            
+            Write-Host ""
+            Write-Host "=========================================="
+            Write-Host "    INFORMASI KONEKSI RDP"
+            Write-Host "=========================================="
+            Write-Host "URL Lengkap: $rdpUrl"
+            Write-Host "Username: rdpuser"
+            Write-Host "Password: $env:RDP_PASSWORD"
+            Write-Host "=========================================="
+            Write-Host ""
+            Write-Host "Cara Koneksi:"
+            Write-Host "1. Buka Remote Desktop Connection"
+            Write-Host "2. Masukkan: $($rdpUrl -replace 'tcp://', '')"
+            Write-Host "3. Login dengan username dan password di atas"
+            Write-Host ""
+          } catch {
+            Write-Host "Error: Tidak dapat mengambil info tunnel"
+            Write-Host "Coba cek manual di: http://127.0.0.1:4040"
+          }
 
       - name: Keep Alive
         run: |
