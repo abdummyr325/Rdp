@@ -1,4 +1,4 @@
-name: Windows RDP Server with ngrok
+name: Windows RDP Server with Cloudflare
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   rdp-server:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
 
     steps:
       - name: Enable Remote Desktop
@@ -14,11 +14,11 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
-          Write-Host "RDP telah diaktifkan"
+          Write-Host "✓ RDP telah diaktifkan"
 
       - name: Create RDP User
         run: |
-          $Password = "P@ssw0rd!" + (Get-Random -Maximum 9999)
+          $Password = "Admin@" + (Get-Random -Minimum 100000 -Maximum 999999)
           $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
           
           New-LocalUser -Name "rdpuser" -Password $SecurePassword -PasswordNeverExpires -AccountNeverExpires -ErrorAction SilentlyContinue
@@ -32,85 +32,46 @@ jobs:
           
           echo "RDP_PASSWORD=$Password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Download ngrok
+      - name: Download Cloudflared
         run: |
-          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile ngrok.zip
-          Expand-Archive ngrok.zip
-          Remove-Item ngrok.zip
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+          Write-Host "✓ Cloudflared berhasil didownload"
 
-      - name: Setup ngrok
+      - name: Start Cloudflare Tunnel
         run: |
-          .\ngrok\ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          Write-Host "ngrok telah dikonfigurasi"
+          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:3389" -WindowStyle Hidden
+          Write-Host "✓ Cloudflare Tunnel dimulai"
+          Start-Sleep -Seconds 10
 
-      - name: Start ngrok Tunnel
+      - name: Get Tunnel Info
         run: |
-          Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
-          
-          Write-Host "Menunggu ngrok siap..."
-          $maxRetries = 20
-          $retryCount = 0
-          $tunnelReady = $false
-          
-          while (-not $tunnelReady -and $retryCount -lt $maxRetries) {
-            Start-Sleep -Seconds 3
-            try {
-              $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-              if ($response.tunnels.Count -gt 0) {
-                $publicUrl = $response.tunnels[0].public_url
-                Write-Host "======================================"
-                Write-Host "Ngrok Tunnel: $publicUrl"
-                Write-Host "======================================"
-                echo "NGROK_URL=$publicUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-                $tunnelReady = $true
-              }
-            } catch {
-              $retryCount++
-              Write-Host "Retry $retryCount/$maxRetries..."
-            }
-          }
-          
-          if (-not $tunnelReady) {
-            throw "Gagal membuat ngrok tunnel setelah $maxRetries percobaan"
-          }
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "   INFORMASI KONEKSI RDP CLOUDFLARE"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "Cek log Cloudflare di atas untuk URL tunnel"
+          Write-Host "Format: https://xxx-xxx-xxx-xxx.trycloudflare.com"
+          Write-Host ""
+          Write-Host "Username: rdpuser"
+          Write-Host "Password: $env:RDP_PASSWORD"
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "CARA KONEKSI:"
+          Write-Host "1. Install cloudflared di komputer lokal kamu"
+          Write-Host "2. Jalankan: cloudflared access rdp --hostname TUNNEL_URL --url localhost:3390"
+          Write-Host "3. Buka RDP ke localhost:3390"
+          Write-Host ""
 
-      - name: Display Connection Info
+      - name: Keep Alive (6 Hours)
         run: |
-          Start-Sleep -Seconds 2
+          Write-Host "Server RDP aktif..."
+          Write-Host "Tekan Cancel untuk menghentikan"
           
-          try {
-            $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-            $rdpUrl = $tunnels.tunnels[0].public_url
-            
-            Write-Host ""
-            Write-Host "=========================================="
-            Write-Host "    INFORMASI KONEKSI RDP"
-            Write-Host "=========================================="
-            Write-Host "URL Lengkap: $rdpUrl"
-            Write-Host "Username: rdpuser"
-            Write-Host "Password: $env:RDP_PASSWORD"
-            Write-Host "=========================================="
-            Write-Host ""
-            Write-Host "Cara Koneksi:"
-            Write-Host "1. Buka Remote Desktop Connection"
-            Write-Host "2. Masukkan: $($rdpUrl -replace 'tcp://', '')"
-            Write-Host "3. Login dengan username dan password di atas"
-            Write-Host ""
-          } catch {
-            Write-Host "Error: Tidak dapat mengambil info tunnel"
-            Write-Host "Coba cek manual di: http://127.0.0.1:4040"
-          }
-
-      - name: Keep Alive
-        run: |
-          Write-Host "Server RDP aktif selama 2 jam..."
-          Write-Host "Tekan Cancel di GitHub Actions untuk menghentikan lebih awal"
-          
-          $endTime = (Get-Date).AddMinutes(120)
+          $endTime = (Get-Date).AddHours(6)
           while ((Get-Date) -lt $endTime) {
             $remaining = $endTime - (Get-Date)
-            Write-Host "Sisa waktu: $($remaining.Hours)h $($remaining.Minutes)m $($remaining.Seconds)s"
-            Start-Sleep -Seconds 60
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Aktif - Sisa: $($remaining.Hours)h $($remaining.Minutes)m"
+            Start-Sleep -Seconds 300
           }
-          
-          Write-Host "Waktu 2 jam selesai, session ditutup"
